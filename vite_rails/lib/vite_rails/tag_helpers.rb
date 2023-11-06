@@ -38,16 +38,29 @@ module ViteRails::TagHelpers
   def vite_javascript_tag(*names,
                           type: 'module',
                           asset_type: :javascript,
+                          integrity: false,
                           skip_preload_tags: false,
                           skip_style_tags: false,
                           crossorigin: 'anonymous',
                           media: 'screen',
                           **options)
     entries = vite_manifest.resolve_entries(*names, type: asset_type)
-    tags = javascript_include_tag(*entries.fetch(:scripts), crossorigin: crossorigin, type: type, extname: false, **options)
-    tags << vite_preload_tag(*entries.fetch(:imports), crossorigin: crossorigin, **options) unless skip_preload_tags
+    # tags = javascript_include_tag(*entries.fetch(:scripts), crossorigin: crossorigin, type: type, extname: false, **options)
+    # tags << vite_preload_tag(*entries.fetch(:imports), crossorigin: crossorigin, **options) unless skip_preload_tags
 
     options[:extname] = false if Rails::VERSION::MAJOR >= 7
+
+    tags = ''.html_safe
+
+    entries.fetch(:main).each do |src, attrs|
+      tags << javascript_include_tag(src, crossorigin: crossorigin, type: type, extname: false, **attrs, **options)
+    end
+
+    unless skip_preload_tags
+      entries.fetch(:imports).each do |href, attrs|
+        tags << vite_preload_tag(href, crossorigin: crossorigin, **attrs, **options)
+      end
+    end
 
     tags << stylesheet_link_tag(*entries.fetch(:stylesheets), media: media, **options) unless skip_style_tags
 
@@ -60,12 +73,18 @@ module ViteRails::TagHelpers
   end
 
   # Public: Renders a <link> tag for the specified Vite entrypoints.
-  def vite_stylesheet_tag(*names, **options)
-    style_paths = names.map { |name| vite_asset_path(name, type: :stylesheet) }
+  def vite_stylesheet_tag(*names, integrity: false, **options)
+    # style_paths = names.map { |name| vite_asset_path(name, type: :stylesheet) }
 
     options[:extname] = false if Rails::VERSION::MAJOR >= 7
 
-    stylesheet_link_tag(*style_paths, **options)
+    ''.html_safe.tap do |tags|
+      vite_manifest.resolve_entries(*names, type: :stylesheet).fetch(:main).each do |href, attrs|
+        tags << stylesheet_link_tag(href, **attrs, **options)
+      end
+    end
+
+    # stylesheet_link_tag(*style_paths, **options)
   end
 
   # Public: Renders an <img> tag for the specified Vite asset.
@@ -102,10 +121,11 @@ private
   # Internal: Renders a modulepreload link tag.
   def vite_preload_tag(*sources, crossorigin:, **options)
     asset_paths = sources.map { |source| path_to_asset(source) }
+    integrity = options[:integrity]
     try(:request).try(
       :send_early_hints,
       'Link' => asset_paths.map { |href|
-        %(<#{ href }>; rel=modulepreload; as=script; crossorigin=#{ crossorigin })
+        %(<#{ href }>; rel=modulepreload; as=script; integrity=#{ integrity }; crossorigin=#{ crossorigin })
       }.join("\n"),
     )
     asset_paths.map { |href|
